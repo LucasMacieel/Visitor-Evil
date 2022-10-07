@@ -6,6 +6,9 @@ using UnityEngine.UI;
 [RequireComponent(typeof(CharacterController))]
 public class PlayerControllerI : MonoBehaviour {
 
+	public Text weaponInfo;
+	public WeaponSpreadUI spreadUI;
+
 	public GameObject[] armParts;
 	private CharacterController controller;
 	private Transform head, body;
@@ -18,10 +21,9 @@ public class PlayerControllerI : MonoBehaviour {
 	[Header("Camera")]
 	[Range(1,100)]public int sensitivity = 20;
 	[Range(60,90)]public float clampAngle = 80;
-	[Range(0,0.5f)]public float bodyOffset = 0.25f, armOffset = 0.1f;
-	[Range(30.0f,80.0f)]public float aimFOV = 40, walkFOV = 60, runFOV = 70;
+	[Range(0,0.5f)]public float bodyOffset = 0.3f, armOffset = 0.1f;
+	[Range(30.0f,80.0f)]public float walkFOV = 60, runFOV = 70;
 	[Range(1,3)]public float grabDistance = 2.0f;
-	public bool aiming;
 	public bool nearWall = false;
 
 	[Header("Movement")]
@@ -38,16 +40,18 @@ public class PlayerControllerI : MonoBehaviour {
 	private bool jumping = false, wasGrounded = true;
 	private float onAirTime = 0, gravity = 9.81f;
 
-	[Header("Crouching")]
-	[Range(1.5f,2.0f)]public float uprightHeight = 1.7f;
-	[Range(0.5f,1.5f)]public float crouchHeight = 1.0f;
-	public bool crouching = false;
+	private float uprightHeight;
+	private bool crouching;
 	private bool lockMouse;
 
 	[Header("Weapons")]
 	public List<WeaponController> weapons;
 	public int currentWeapon = 0;
 	private int scrollDir = 0;
+
+	[Header("Inventory")]
+	public List<Item> inventory;
+	[Range(0,40)]public int slots = 20;
 
 	void Start () {
 		controller = GetComponent<CharacterController> ();
@@ -63,11 +67,14 @@ public class PlayerControllerI : MonoBehaviour {
 
 		adjustHeight ();
 		head.localEulerAngles = Vector3.zero;
-		controller.height = uprightHeight;
+
+		uprightHeight = anim.GetBoneTransform (HumanBodyBones.Head).position.y - transform.position.y + 0.1f;
 
 		if (weapons.Count > 0)
 			for (int x = 0; x < weapons.Count; x++)
 				weapons [x].gameObject.SetActive (x == 0);
+
+		keepInventorySize ();
 	}
 
 	void Update () {
@@ -79,28 +86,57 @@ public class PlayerControllerI : MonoBehaviour {
 		Animate ();
 		adjustHeight ();
 		weaponHandler ();
+		HUD ();
+	}
+
+	void keepInventorySize () {
+		if (inventory.Count > slots)
+			while (inventory.Count > slots) {
+				int i = inventory.Count - 1;
+				if (inventory [i])
+					Destroy (inventory [i].gameObject);
+				inventory.RemoveAt (i);
+			}
+	}
+
+	void HUD () {
+		if (weapons.Count > 0 && weapons [currentWeapon].gameObject.activeSelf) {
+			GameObject o = weapons [currentWeapon].gameObject;
+			WeaponController w = weapons [currentWeapon];
+			weaponInfo.text = $"{o.name}\n{w.currentMagazine} / {w.extraAmmo}";
+
+			spreadUI.spread = (w.aimingPosition) ? (0) : (w.currentSpread);
+
+			if (w.spreadType == WeaponController.spreadTypeEnum.circular)
+				spreadUI.spreadType = WeaponSpreadUI.spreadTypeEnum.circular;
+			else
+				spreadUI.spreadType = WeaponSpreadUI.spreadTypeEnum.crosshair;
+		} else {
+			spreadUI.spread = 0;
+		}
 	}
 
 	void weaponHandler() {
 		if (weapons.Count > 0) {
+			// Esconde braços do personagem
 			for (int x = 0; x < armParts.Length; x++)
 				if (armParts [x].activeSelf)
 					armParts [x].SetActive (false);
+			
 			currentWeapon = Mathf.Clamp (currentWeapon, 0, weapons.Count - 1);
 
-			int activeWeapons = 0;
-			for (int x = 0; x < weapons.Count; x++) {
+			int visibleWeapons = 0;
+			for (int x = 0; x < weapons.Count; x++)
 				if (weapons [x].gameObject.activeSelf)
-					activeWeapons++;
-			}
+					visibleWeapons++;
 
-			if (scrollDir == 0 && weapons [currentWeapon].gameObject.activeSelf) {
-				if (Input.mouseScrollDelta.y >= 1)
+			if (scrollDir == 0 && weapons [currentWeapon].available) {
+				float scroll = Input.mouseScrollDelta.y;
+				weapons [currentWeapon].hide = Mathf.Abs (scroll) >= 1;
+				if (scroll >= 1)
 					scrollDir = 1;
-				else if (Input.mouseScrollDelta.y <= -1)
+				else if (scroll <= -1)
 					scrollDir = -1;
-				if (Mathf.Abs (Input.mouseScrollDelta.y) >= 1)
-					weapons [currentWeapon].hide = true;
 			} else if (scrollDir != 0) {
 				currentWeapon += scrollDir;
 				if (currentWeapon >= weapons.Count)
@@ -109,27 +145,25 @@ public class PlayerControllerI : MonoBehaviour {
 					currentWeapon = weapons.Count - 1;
 				scrollDir = 0;
 			}
-			if (activeWeapons == 0)
+			if (visibleWeapons == 0)
 				weapons [currentWeapon].gameObject.SetActive (true);
 		} else {
+			// Mostra braços do personagem
 			for (int x = 0; x < armParts.Length; x++)
 				if (!armParts [x].activeSelf)
 					armParts [x].SetActive (true);
 		}
 
+		float weaponFOV = -1;
 		if (weapons.Count > 0) {
-			if (state.Contains ("run"))
-				weapons [currentWeapon].playerState = WeaponController.playerStateEnum.running;
-			else if (state.Contains ("walk"))
-				weapons [currentWeapon].playerState = WeaponController.playerStateEnum.walking;
-			else
-				weapons [currentWeapon].playerState = WeaponController.playerStateEnum.idle;
-			if (weapons [currentWeapon].aiming)
-				cam.fieldOfView = Mathf.Lerp (cam.fieldOfView, aimFOV, 5 * Time.deltaTime);
-			else
-				cam.fieldOfView = Mathf.Lerp (cam.fieldOfView, walkFOV, 5 * Time.deltaTime);
-		} else
-			cam.fieldOfView = Mathf.Lerp (cam.fieldOfView, walkFOV, 5 * Time.deltaTime);
+			weapons [currentWeapon].playerState = state;
+			if (weapons [currentWeapon].aimingPosition)
+				weaponFOV = weapons [currentWeapon].fov;
+		}
+
+		// Adjusting FOV
+		float newFOV = (weaponFOV > 0) ? (weaponFOV) : ((state.Contains("run")) ? (runFOV) : (walkFOV));
+		cam.fieldOfView = Mathf.Lerp (cam.fieldOfView, newFOV, 5 * Time.deltaTime);
 	}
 
 	void checkLockMouse () {
@@ -151,13 +185,15 @@ public class PlayerControllerI : MonoBehaviour {
 	void Animate () {
 		float posture = anim.GetFloat ("Posture"), speed = anim.GetFloat ("Speed"), multiplier = 5 * Time.deltaTime;
 		anim.SetFloat ("Posture", Mathf.Lerp (posture, (state.Contains ("crouch")) ? (1) : ((state == "on air")?(0):(0.5f)), multiplier));
-		if (state.Contains ("crouch")) {anim.SetFloat ("Speed", Mathf.Lerp (speed, (state.Contains ("idle")) ? (0) : (1), multiplier));}
-		else {anim.SetFloat ("Speed", Mathf.Lerp (speed, (state.Contains ("idle")) ? (0) : ((state.Contains ("run"))?(1):(0.5f)), multiplier));}
+		if (state.Contains ("crouch"))
+			anim.SetFloat ("Speed", Mathf.Lerp (speed, (state.Contains ("idle")) ? (0) : (1), multiplier));
+		else
+			anim.SetFloat ("Speed", Mathf.Lerp (speed, (state.Contains ("idle")) ? (0) : ((state.Contains ("run"))?(1):(0.5f)), multiplier));
 	}
 
 	void adjustHeight () {
 		body.localPosition = Vector3.zero;
-		controller.height = Mathf.Lerp(controller.height, (crouching) ? (crouchHeight) : (uprightHeight), 3 * Time.deltaTime);
+		controller.height = head.position.y - transform.position.y + 0.2f;
 		controller.center = new Vector3 (0, controller.height * 0.5f, 0);
 
 		Transform neckBone = anim.GetBoneTransform(HumanBodyBones.Neck);
@@ -165,33 +201,37 @@ public class PlayerControllerI : MonoBehaviour {
 		neckBone.SetParent (transform);
 		Vector3 neckOffset = neckBone.localPosition;
 		neckBone.SetParent (neckParent);
-		body.localPosition = new Vector3 (-neckOffset.x, -controller.skinWidth, -neckOffset.z - bodyOffset);
+
+		float footOffset = transform.position.y - anim.rootPosition.y;
+		body.localPosition = new Vector3 (-neckOffset.x, footOffset - controller.skinWidth, -neckOffset.z - bodyOffset);
+
+		// Keeps the camera on its axis
+		float headY = anim.GetBoneTransform (HumanBodyBones.Head).position.y;
+		head.localPosition = Vector3.up * (headY - transform.position.y + 0.1f);
 	}
 
 	// Converts [0,360] angle to [-180,180]
 	float angle_0_180(float angle){
 		angle = angle % 360;
-		if (angle <= -180) {angle += 360;}
-		else if (angle >= 180) {angle -= 360;}
+		if (angle <= -180)
+			angle += 360;
+		else if (angle >= 180)
+			angle -= 360;
 		return angle;
 	}
 
 	float angle_0_360(float angle){
 		angle = angle % 360;
-		if (angle < 0) {angle += 360;}
+		if (angle < 0)
+			angle += 360;
 		return angle;
 	}
 
 	void looking () {
-		// Keeps the camera on its axis
-		head.localPosition = new Vector3 (0, controller.height - 0.15f - controller.skinWidth, 0);
 		// Mouse input
 		Vector2 mouseInput = new Vector2 (Input.GetAxis ("Mouse X"), Input.GetAxis ("Mouse Y")) * 5 * sensitivity * Time.deltaTime;
 		transform.eulerAngles += new Vector3 (0, mouseInput.x, 0);
 		head.localEulerAngles = new Vector3 (Mathf.Clamp (angle_0_180(head.localEulerAngles.x) - mouseInput.y, -clampAngle, clampAngle), 0, 0);
-		// Adjusting FOV
-		float newFOV = (aiming) ? (aimFOV) : ((state.Contains("run")) ? (runFOV) : (walkFOV));
-		cam.fieldOfView = Mathf.Lerp(cam.fieldOfView, newFOV, 5 * Time.deltaTime);
 	}
 
 	void Movement () {
@@ -254,15 +294,17 @@ public class PlayerControllerI : MonoBehaviour {
 	}
 
 	bool isGrounded () {
-		if (controller.isGrounded) {
+		if (controller.isGrounded)
 			return true;
-		} else {
+		else {
 			float randAngle = UnityEngine.Random.Range (0, 45);
 			for (float d = 0.5f; d <= 1; d += 0.5f) {
-				for (int theta = 0; theta < 360; theta += 45){
+				for (int theta = 0; theta < 360; theta += 45) {
 					Vector3 rayLocation = transform.position + new Vector3 (Mathf.Cos ((theta + randAngle) * Mathf.Deg2Rad), 0, Mathf.Sin ((theta + randAngle) * Mathf.Deg2Rad)) * d * controller.radius;
 					RaycastHit[] hits = Physics.RaycastAll (rayLocation, Vector3.down, controller.skinWidth + 0.05f + controller.stepOffset);
-					for (int i = 0; i < hits.Length; i++) {if (hits [i].transform.root != transform) {return true;}}
+					for (int i = 0; i < hits.Length; i++)
+						if (hits [i].transform.root != transform)
+							return true;
 				}
 			}
 			return false;
@@ -273,16 +315,14 @@ public class PlayerControllerI : MonoBehaviour {
 	bool canUncrouch () {
 		float randAngle = UnityEngine.Random.Range (0, 45);
 		for (float d = 0.5f; d <= 1; d += 0.5f) {
-			for (int theta = 0; theta < 360; theta += 45){
+			for (int theta = 0; theta < 360; theta += 45) {
 				float newAngle = theta + randAngle;
 				Vector3 rayOffset = new Vector3 (Mathf.Cos (newAngle * Mathf.Deg2Rad), 0, Mathf.Sin (newAngle * Mathf.Deg2Rad)) * d * controller.radius;
-				Vector3 rayLocation = transform.position + (Vector3.up * crouchHeight) + rayOffset;
-				RaycastHit[] hits = Physics.RaycastAll (rayLocation, Vector3.up, uprightHeight - crouchHeight);
-				for (int i = 0; i < hits.Length; i++) {
-					if (hits [i].transform.root != transform && hits [i].distance < uprightHeight - crouchHeight) {
+				Vector3 rayLocation = head.position + rayOffset;
+				RaycastHit[] hits = Physics.RaycastAll (rayLocation, Vector3.up, uprightHeight - head.position.y);
+				for (int i = 0; i < hits.Length; i++)
+					if (hits [i].transform.root != transform && hits [i].distance < uprightHeight - head.position.y)
 						return false;
-					}
-				}
 			}
 		}
 		return true;
@@ -297,7 +337,8 @@ public class PlayerControllerI : MonoBehaviour {
 			controller.stepOffset = stepOffset;
 			controller.slopeLimit = slopeLimit;
 		} else {
-			if (wasGrounded && !jumping) {currentJumps++;}
+			if (wasGrounded && !jumping)
+				currentJumps++;
 			onAirTime += Time.deltaTime;
 			float v0 = (jumping) ? (Mathf.Sqrt (2 * jumpHeight * gravity)) : (0);
 			float v = v0 - gravity * onAirTime;
@@ -319,10 +360,13 @@ public class PlayerControllerI : MonoBehaviour {
 
 	void crouch () {
 		if (state == "on air" || state == "upright run") {
-			if (canUncrouch ()) {crouching = false;}
+			if (canUncrouch ())
+				crouching = false;
 		} else if (Input.GetKeyDown (KeyCode.C)) {
-			if (!crouching) {crouching = true;}
-			else if (canUncrouch ()) {crouching = false;}
+			if (!crouching)
+				crouching = true;
+			else if (canUncrouch ())
+				crouching = false;
 		}
 	}
 }
