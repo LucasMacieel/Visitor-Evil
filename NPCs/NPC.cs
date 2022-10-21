@@ -10,16 +10,18 @@ public class NPC : MonoBehaviour {
 	[Range(0.5f,5)]public float damageMultiplier = 1;
 	// Região circular em volta do alvo que pode ficar
 	public Vector2 interactRadius = new Vector2 (1, 3);
-	[Range(0.5f,1.0f)]public float attackInterval = 1;
+	[Range(0.3f,1.0f)]public float attackInterval = 1;
 	private float timeWithoutAttacks = 0;
 
 	private NavMeshAgent nav;
 	private Vector3 destination;
 	private Animator anim;
 
-	public bool aggressive, hit;
+	public bool aggressive;
+	public AudioClip[] hurt;
+	[HideInInspector]public bool hit;
+	[HideInInspector]public string state;
 
-	public string state;
 
 	private bool wasAttacking;
 
@@ -67,13 +69,35 @@ public class NPC : MonoBehaviour {
 		}
 	}
 
+	public float DistanceFromTarget () {
+		if (target) {
+			Vector3 headPos = transform.position + Vector3.up * nav.height;
+			Vector3 feetPos = transform.position;
+			CharacterController c = target.root.GetComponent <CharacterController> ();
+			NavMeshAgent n = target.root.GetComponent <NavMeshAgent> ();
+			float distance = Vector3.Distance (headPos, target.root.transform.position);
+			float distance1 = Vector3.Distance (feetPos, target.root.transform.position);
+			float distance2 = Mathf.Infinity;
+			float distance3 = Mathf.Infinity;
+			if (c) {
+				distance2 = Vector3.Distance (headPos, target.root.transform.position + Vector3.up * c.height);
+				distance3 = Vector3.Distance (feetPos, target.root.transform.position + Vector3.up * c.height);
+			} else if (n) {
+				distance2 = Vector3.Distance (headPos, target.root.transform.position + Vector3.up * n.height);
+				distance3 = Vector3.Distance (feetPos, target.root.transform.position + Vector3.up * n.height);
+			}
+			return Mathf.Min(distance, Mathf.Min(distance1, Mathf.Min(distance2, distance3)));
+		} else
+			return Mathf.Infinity;
+	}
+
 	void FollowTarget () {
-		if (state != "dead") {
+		if (health > 0) {
 			if (!nav.enabled)
 				nav.enabled = true;
 			if (target) {
 				// Near the target position
-				float distanceFromTarget = Vector3.Distance (transform.position, target.transform.position);
+				float distanceFromTarget = DistanceFromTarget ();
 				if (distanceFromTarget > interactRadius.y) {
 					float targetDisplacement = Vector3.Distance (target.position, destination);
 					if (targetDisplacement > 1.0f) {
@@ -99,8 +123,8 @@ public class NPC : MonoBehaviour {
 	}
 
 	void Attacks () {
-		if (state != "dead" && state != "hit" && aggressive && target) {
-			float distanceFromTarget = Vector3.Distance (transform.position, target.transform.position);
+		if (health > 0 && state != "hit" && aggressive && target) {
+			float distanceFromTarget = DistanceFromTarget ();
 			int i = anim.GetLayerIndex ("Attack");
 			if (state != "attack" && distanceFromTarget <= interactRadius.y && timeWithoutAttacks >= attackInterval) {
 				state = "attack";
@@ -122,10 +146,20 @@ public class NPC : MonoBehaviour {
 	}
 
 	void CheckHit () {
-		if (state != "dead" && hit) {
+		if (health > 0 && hit) {
+			if (aggressive) {
+				GameObject p = GameObject.FindGameObjectWithTag ("Player");
+				if (p && target != p.transform)
+					target = p.transform;
+			}
+
 			if (state != "hit") {
 				state = "hit";
 				anim.Play ("Hit", anim.GetLayerIndex ("Hit"), 0);
+				if (hurt.Length > 0) {
+					int randClip = UnityEngine.Random.Range (0, hurt.Length);
+					transform.root.GetComponent <AudioSource> ().PlayOneShot (hurt[randClip], 1);
+				}
 			} else {
 				int i = anim.GetLayerIndex ("Hit");
 				if (anim.GetCurrentAnimatorStateInfo (i).normalizedTime >= 0.95f) {
@@ -147,7 +181,7 @@ public class NPC : MonoBehaviour {
 				Destroy (gameObject.GetComponent <Collider> ());
 				nav.speed = 0;
 			} else {
-				if (anim.GetCurrentAnimatorStateInfo (i).normalizedTime >= 0.95f) {
+				if (anim.GetCurrentAnimatorStateInfo (i).normalizedTime >= 1) {
 					anim.transform.SetParent (null);
 					Destroy (anim);
 					Destroy (gameObject);

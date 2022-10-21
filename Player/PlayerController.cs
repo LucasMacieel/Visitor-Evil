@@ -2,12 +2,14 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
+using UnityEngine.SceneManagement;
 
 [RequireComponent(typeof(CharacterController))]
 public class PlayerController : MonoBehaviour {
 
-	public Text weaponInfo;
-	public WeaponSpreadUI spreadUI;
+	[HideInInspector]public Text weaponInfo, collectableInfo;
+	[HideInInspector]public Image healthInfo;
+	[HideInInspector]public WeaponSpreadUI spreadUI;
 
 	public GameObject[] armParts;
 	private CharacterController controller;
@@ -58,7 +60,14 @@ public class PlayerController : MonoBehaviour {
 	public List<string> keys;
 	[Range(0,10)]public int healers = 0, maxHealers = 5;
 
-	public AudioClip[] stepSounds;
+	[Header("Health")]
+	[Range(0,100)]public int health = 100;
+	[Range(1,100)]public int maxHealth = 100;
+	public GameObject healerPrefab, deathPrefab;
+	private GameObject healerInstance;
+	private bool healing, interruptWeapons;
+
+	public AudioClip[] hurt;
 	[HideInInspector]public AudioSource audio;
 
 	void Start () {
@@ -119,6 +128,41 @@ public class PlayerController : MonoBehaviour {
 		weaponHandler ();
 		HUD ();
 		Interact ();
+		CheckHealing ();
+		CheckDeath ();
+
+		if (transform.position.y <= -50)
+			SceneManager.LoadScene("Menu");
+	}
+
+	void CheckDeath () {
+		if (health <= 0){
+			DeathLerper deathLerper = Instantiate(deathPrefab, transform.position, transform.rotation).GetComponent <DeathLerper> ();
+			head.SetParent (null);
+			deathLerper.head = head;
+			bool fittable = canFitArray(currentWeapon, weapons1.Length) && weapons1 [currentWeapon];
+			Gun g = (fittable) ? (weapons1 [currentWeapon].GetComponent<Gun> ()) : (null);
+			Knife k = (fittable) ? (weapons1 [currentWeapon].GetComponent<Knife> ()) : (null);
+			bool available = (g && g.available) || (k && k.available);
+			if (available)
+				if (g)
+					g.hide = true;
+				else if (k)
+					k.hide = true;
+			Destroy (gameObject);
+		}
+	}
+
+	void CheckHealing () {
+		if (healing && !healerInstance) {
+			interruptWeapons = false;
+			healing = false;
+		} else if (!healing && Input.GetKeyDown (KeyCode.H) && healers > 0 && health < maxHealth) {
+			healers--;
+			healerInstance = Instantiate(healerPrefab, head.position, head.rotation, head);
+			healing = true;
+			interruptWeapons = true;
+		}
 	}
 
 	bool isInteractable (GameObject o) {
@@ -142,12 +186,12 @@ public class PlayerController : MonoBehaviour {
 		RaycastHit[] hits = Physics.RaycastAll (head.position, head.forward, interactRange);
 		GameObject interactable = closestInteractable (hits);
 		if (interactable) {
+			Ammo ammo = interactable.GetComponent <Ammo> ();
+			Key key = interactable.GetComponent <Key> ();
+			CollectableHealer healer = interactable.GetComponent <CollectableHealer> ();
+			CollectableWeapon weapon = interactable.GetComponent <CollectableWeapon> ();
+			DoorLocker door = interactable.GetComponent <DoorLocker> ();
 			if (Input.GetKeyDown (KeyCode.E)) {
-				Ammo ammo = interactable.GetComponent <Ammo> ();
-				Key key = interactable.GetComponent <Key> ();
-				CollectableHealer healer = interactable.GetComponent <CollectableHealer> ();
-				CollectableWeapon weapon = interactable.GetComponent <CollectableWeapon> ();
-				DoorLocker door = interactable.GetComponent <DoorLocker> ();
 				bool canDestroy = false;
 				if (ammo) {
 					switch (ammo.ammoType) {
@@ -187,6 +231,7 @@ public class PlayerController : MonoBehaviour {
 				} else if (key) {
 					if (!keys.Contains (key.id))
 						keys.Add (key.id);
+					canDestroy = true;
 				} else if (healer) {
 					if (healers < maxHealers) {
 						healers++;
@@ -232,12 +277,40 @@ public class PlayerController : MonoBehaviour {
 				if (canDestroy)
 					Destroy (interactable.transform.root.gameObject);
 			} else {
-				// You can pick an item pressing E
+				if (ammo) {
+					switch (ammo.ammoType) {
+					case Ammo.ammoTypeEnum.arrow:
+						collectableInfo.text = "Pacote de flechas";
+						break;
+					case Ammo.ammoTypeEnum.pistol:
+						collectableInfo.text = "Munição de pistola";
+						break;
+					case Ammo.ammoTypeEnum.rifle:
+						collectableInfo.text = "Munição de rifle";
+						break;
+					case Ammo.ammoTypeEnum.shotgun:
+						collectableInfo.text = "Munição de shotgun";
+						break;
+					}
+				} else if (key)
+					collectableInfo.text = "Chave magnética";
+				else if (healer)
+					collectableInfo.text = "Kit médico";
+				else if (weapon)
+					collectableInfo.text = weapon.gameObject.name;
+				else if (door)
+					if (keys.Contains (door.id))
+						collectableInfo.text = "Usar chave magnética";
+					else
+						collectableInfo.text = "Não tenho a chave magnética";
 			}
+		} else {
+			collectableInfo.text = "";
 		}
 	}
 
 	void HUD () {
+		healthInfo.fillAmount = (float)health / (float)maxHealth;
 		if (hasSomeWeapon () && weapons1 [currentWeapon].activeSelf) {
 			Gun g = weapons1 [currentWeapon].GetComponent<Gun> ();
 			Knife k = weapons1 [currentWeapon].GetComponent<Knife> ();
@@ -258,6 +331,7 @@ public class PlayerController : MonoBehaviour {
 				spreadUI.spreadType = WeaponSpreadUI.spreadTypeEnum.crosshair;
 		} else {
 			spreadUI.spread = 0;
+			weaponInfo.text = "";
 		}
 	}
 
@@ -286,40 +360,47 @@ public class PlayerController : MonoBehaviour {
 			Knife k = (fittable) ? (weapons1 [currentWeapon].GetComponent<Knife> ()) : (null);
 			bool available = (g && g.available) || (k && k.available);
 
-			if (scrollDir == 0 && available) {
-				float scroll = Input.mouseScrollDelta.y;
-				if (Mathf.Abs (scroll) >= 1 && weaponCount > 1) {
-					if (g)
-						g.hide = true;
-					else if (k)
-						k.hide = true;
-					if (scroll >= 1)
-						scrollDir = 1;
-					else if (scroll <= -1)
-						scrollDir = -1;
-				}
+			if (interruptWeapons) {
+				if (g)
+					g.hide = true;
+				else if (k)
+					k.hide = true;
+			} else {
+				if (scrollDir == 0 && available) {
+					float scroll = Input.mouseScrollDelta.y;
+					if (Mathf.Abs (scroll) >= 1 && weaponCount > 1) {
+						if (g)
+							g.hide = true;
+						else if (k)
+							k.hide = true;
+						if (scroll >= 1)
+							scrollDir = 1;
+						else if (scroll <= -1)
+							scrollDir = -1;
+					}
 
-				// Ajustando o FOV e estado das armas
-				if (g) {
-					g.playerState = state;
-					if (g.aiming)
-						weaponFOV = g.fov;
-				} else if (k)
-					k.playerState = state;
+					// Ajustando o FOV e estado das armas
+					if (g) {
+						g.playerState = state;
+						if (g.aiming)
+							weaponFOV = g.fov;
+					} else if (k)
+						k.playerState = state;
 
-			} else if (scrollDir != 0) {
-				currentWeapon += scrollDir;
-				bool validSwap = false;
-				while (!validSwap) {
-					currentWeapon = (currentWeapon < 0) ? (weapons1.Length - 1) : ((currentWeapon >= weapons1.Length) ? (0) : (currentWeapon));
-					validSwap = weapons1 [currentWeapon];
-					if (!validSwap)
-						currentWeapon += scrollDir;
+				} else if (scrollDir != 0) {
+					currentWeapon += scrollDir;
+					bool validSwap = false;
+					while (!validSwap) {
+						currentWeapon = (currentWeapon < 0) ? (weapons1.Length - 1) : ((currentWeapon >= weapons1.Length) ? (0) : (currentWeapon));
+						validSwap = weapons1 [currentWeapon];
+						if (!validSwap)
+							currentWeapon += scrollDir;
+					}
+					scrollDir = 0;
 				}
-				scrollDir = 0;
+				if (visibleWeapons == 0 && fittable)
+					weapons1 [currentWeapon].SetActive (true);
 			}
-			if (visibleWeapons == 0 && fittable)
-				weapons1 [currentWeapon].SetActive (true);
 		} else {
 			// Mostra braços do personagem
 			for (int x = 0; x < armParts.Length; x++)

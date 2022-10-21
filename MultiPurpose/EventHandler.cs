@@ -16,16 +16,20 @@ public class EventHandler : MonoBehaviour {
 		if (npc) {
 			// I am an NPC
 			damage = Mathf.CeilToInt (npc.damageMultiplier * (float)damage);
-			if (npc.target && Vector3.Distance (npc.transform.position, npc.target.transform.position) <= npc.interactRadius.y) {
-				NPC other_npc = npc.target.GetComponent <NPC> ();
-				PlayerController other_player = transform.root.GetComponent <PlayerController> ();
+			if (npc.target && npc.DistanceFromTarget () <= npc.interactRadius.y) {
+				NPC other_npc = npc.target.root.GetComponent <NPC> ();
+				PlayerController other_player = npc.target.root.GetComponent <PlayerController> ();
 				if (other_npc) {
 					// Hitting another NPC
 					other_npc.health -= damage;
 					other_npc.hit = true;
 				} else if (other_player) {
 					// Hitting the player
-
+					if (other_player.hurt.Length > 0) {
+						int randClip = UnityEngine.Random.Range (0, other_player.hurt.Length);
+						other_player.audio.PlayOneShot (other_player.hurt[randClip], 1);
+					}
+					other_player.health -= damage;
 				}
 			}
 		} else if (player) {
@@ -38,21 +42,11 @@ public class EventHandler : MonoBehaviour {
 	}
 
 	public void Sound (AnimationEvent e) {
-		//NPC npc = transform.root.GetComponent <NPC> ();
-		PlayerController player = transform.root.GetComponent <PlayerController> ();
-		if (player) {
-			player.audio.PlayOneShot ((AudioClip)e.objectReferenceParameter, e.floatParameter);
-
-			// I am a player making noise
-			/*
-			Knife knife = (k) ? (k.GetComponent <Knife> ()) : (null);
-			if (knife)
-				knife.Attack ();*/
-		}
-	}
-	
-	// Update is called once per frame
-	void Update () {
-		
+		AudioSource src = transform.root.GetComponent <AudioSource> ();
+		AudioClip clip = (AudioClip)e.objectReferenceParameter;
+		if (!clip.name.ToLower ().Contains ("foot"))
+			src.PlayOneShot (clip, e.floatParameter);
+		else if (src && e.animatorClipInfo.weight > 0.5)
+			src.PlayOneShot (clip, e.floatParameter);
 	}
 }

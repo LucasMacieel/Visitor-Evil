@@ -4,13 +4,19 @@ using UnityEngine;
 
 public class Healer : MonoBehaviour {
 
-	// Use this for initialization
+	[Range(1,100)]public int health = 50;
+	private Animator anim;
+
 	void Start () {
-		
+		anim = GetComponentInChildren <Animator> ();
 	}
 	
-	// Update is called once per frame
 	void Update () {
-		
+		if (anim.GetCurrentAnimatorStateInfo (0).normalizedTime >= 1){
+			Destroy (gameObject);
+			PlayerController p = transform.root.GetComponent <PlayerController> ();
+			if (p)
+				p.health = (p.health + health >= p.maxHealth) ? (p.maxHealth) : (p.health + health);
+		}
 	}
 }
